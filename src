@@ -1,0 +1,69 @@
+/**
+ * Next.js-ის ოფიციალური "instrumentation" hook — გაეშვება ერთხელ,
+ * სერვერის პროცესის დაწყებისთანავე (არა ყოველ request-ზე). იდეალური
+ * ადგილია startup-ის ვალიდაციისთვის, სანამ პირველი request საერთოდ
+ * მოვა.
+ *
+ * საჭიროებს `experimental.instrumentationHook` არ სჭირდება Next.js
+ * 15-ში — ეს ფუნქციონალი უკვე stable-ია.
+ */
+export async function register() {
+  // მხოლოდ Node.js runtime-ზე (არა Edge) — validateEnv() უბრალო
+  // synchronous შემოწმებაა, მაგრამ ეს გვარდი საჭიროა, რადგან
+  // instrumentation.ts ორივე runtime-ზე გაშვება შეიძლება.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { validateEnv } = await import("@/lib/env");
+    validateEnv();
+  }
+}
+
+import { NextResponse, type NextRequest } from "next/server";
+
+import { updateSession } from "@/lib/supabase/middleware";
+
+const PROTECTED_PREFIXES = ["/admin", "/federation"];
+
+/**
+ * მიდლვეარის პასუხისმგებლობა შეგნებულად შეზღუდულია ორ რამეზე:
+ *   1. სესიის cookie-ების განახლება ყოველ request-ზე (updateSession)
+ *   2. სწრაფი შემოწმება — ზოგადად "შესულია თუ არა" — დაცულ routes-ზე
+ *
+ * როლის დეტალური შემოწმება (platform_admin vs federation_admin) კი
+ * თავად layout.tsx-ებშია (app/admin/layout.tsx, app/federation/layout.tsx),
+ * არა აქ. ეს შეგნებული არჩევანია: middleware ყოველ request-ზე გაშვებულ
+ * Edge ფუნქციაა, ამიტომ მასში ზედმეტი DB query (profiles ცხრილიდან
+ * role-ის წამოსაღებად) დაამატებდა ლატენტობას ყველა route-ზე, მათ შორის
+ * საჯაროებზეც. Layout-ს ისედაც სჭირდება profile-ის სრული წამოღება
+ * (სახელის საჩვენებლად და ა.შ.), ამიტომ როლის შემოწმებაც იქვე ხდება —
+ * ერთი query, ორი მიზანი.
+ */
+export async function middleware(request: NextRequest) {
+  const { response, user } = await updateSession(request);
+
+  const isProtectedPath = PROTECTED_PREFIXES.some((prefix) =>
+    request.nextUrl.pathname.startsWith(prefix)
+  );
+
+  if (isProtectedPath && !user) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirectTo", request.nextUrl.pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  return response;
+}
+
+export const config = {
+  matcher: [
+    /*
+     * ყველა route-ზე გაშვება, გარდა:
+     * - _next/static (სტატიკური ფაილები)
+     * - _next/image (სურათების ოპტიმიზაციის endpoint)
+     * - favicon.ico, სურათები
+     * სესიის cookie მაინც უნდა განახლდეს არა-დაცულ გვერდებზეც (მაგ.
+     * მთავარი გვერდი), რომ Navbar-მა სწორად იცოდეს ვინ არის შესული —
+     * ამიტომ matcher საკმაოდ ფართოა, უბრალოდ სტატიკურ ასეტებს გამორიცხავს.
+     */
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};
