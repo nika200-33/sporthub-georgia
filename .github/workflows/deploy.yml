@@ -1,0 +1,64 @@
+name: CI
+
+# გაეშვება ყოველ push-ზე main-ში და ყოველ Pull Request-ზე — ადრეულად
+# იჭერს ტიპის შეცდომებს, lint-ის დარღვევებს და build-ის ჩავარდნებს,
+# სანამ ისინი production-ში აღმოჩნდებოდნენ.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js-ის დაყენება
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: დამოკიდებულებების ინსტალაცია
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: TypeScript ტიპების შემოწმება
+        run: npm run type-check
+
+  build:
+    name: Production Build
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js-ის დაყენება
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: დამოკიდებულებების ინსტალაცია
+        run: npm ci
+
+      # build-ის დროს გვერდები, რომლებსაც generateStaticParams აქვთ
+      # (მაგ. /events/[slug]), რეალურად უკავშირდებიან Supabase-ს SSG-ის
+      # დროს ლინკების წინასწარ გენერირებისთვის — ამიტომ build-ს ნამდვილი
+      # (staging პროექტის) გარემოს ცვლადები სჭირდება, არა mock/fake
+      # მნიშვნელობები. დაამატეთ ეს secrets GitHub repo-ს Settings →
+      # Secrets and variables → Actions-ში:
+      #   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      #   SUPABASE_SERVICE_ROLE_KEY, NEXT_PUBLIC_SITE_URL
+      - name: Production build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
